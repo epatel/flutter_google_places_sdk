@@ -10,6 +10,7 @@ public class SwiftFlutterGooglePlacesSdkIosPlugin: NSObject, FlutterPlugin {
     let METHOD_FIND_AUTOCOMPLETE_PREDICTIONS = "findAutocompletePredictions"
     let METHOD_FETCH_PLACE = "fetchPlace"
     let METHOD_FETCH_PLACE_PHOTO = "fetchPlacePhoto"
+    let METHOD_SEARCH_NEARBY = "searchNearby"
     
     private var placesClient: GMSPlacesClient!
     private var lastSessionToken: GMSAutocompleteSessionToken?
@@ -101,7 +102,7 @@ public class SwiftFlutterGooglePlacesSdkIosPlugin: NSObject, FlutterPlugin {
             let args = call.arguments as! Dictionary<String,Any>
             let photoMetadataMap = args["photoMetadata"] as! Dictionary<String,Any>
             let photoRef = photoMetadataMap["photoReference"] as! String
-            
+
             if let photoMetadata = photosCache[photoRef] {
                 placesClient.loadPlacePhoto(photoMetadata, callback: { (photo, error) -> Void in
                     if let error = error {
@@ -123,6 +124,59 @@ public class SwiftFlutterGooglePlacesSdkIosPlugin: NSObject, FlutterPlugin {
                     details: ""
                 ))
             }
+        case METHOD_SEARCH_NEARBY:
+            let args = call.arguments as! Dictionary<String,Any>
+            let properties = (args["fields"] as? [String])?.map {
+                (item) in return placePropertyFromStr(it: item)
+            } ?? [GMSPlaceProperty.all.rawValue]
+            let locationRestriction = circularBoundsFromMap(argument: args["locationRestriction"] as? Dictionary<String, Any?>)
+            let includedTypes = args["includedTypes"] as? [String]
+            let includedPrimaryTypes = args["includedPrimaryTypes"] as? [String]
+            let excludedTypes = args["excludedTypes"] as? [String]
+            let excludedPrimaryTypes = args["excludedPrimaryTypes"] as? [String]
+            let rankPreference = args["rankPreference"] as? String
+            let regionCode = args["regionCode"] as? String
+            let maxResultCount = args["maxResultCount"] as? Int
+
+            guard let locationRestriction = locationRestriction else {
+                result(FlutterError(
+                    code: "API_ERROR",
+                    message: "locationRestriction is required",
+                    details: nil
+                ))
+                return
+            }
+
+            let request = GMSPlaceSearchNearbyRequest(locationRestriction: locationRestriction, placeProperties: properties)
+            request.includedTypes = includedTypes ?? []
+            request.includedPrimaryTypes = includedPrimaryTypes ?? []
+            request.excludedTypes = excludedTypes ?? []
+            request.excludedPrimaryTypes = excludedPrimaryTypes ?? []
+            if let maxResultCount = maxResultCount {
+                request.maxResultCount = maxResultCount
+            }
+            request.regionCode = regionCode
+            if let rankPreference = rankPreference {
+                if rankPreference == "DISTANCE" {
+                    request.rankPreference = GMSPlaceSearchNearbyRankPreference.distance
+                } else if rankPreference == "POPULARITY" {
+                    request.rankPreference = GMSPlaceSearchNearbyRankPreference.popularity
+                }
+            }
+
+            placesClient.searchNearby(with: request, callback: { (places, error) in
+                if let error = error {
+                    print("searchNearby error: \(error)")
+                    result(FlutterError(
+                        code: "API_ERROR",
+                        message: error.localizedDescription,
+                        details: nil
+                    ))
+                } else {
+                    let mappedPlaces = places?.map { self.placeToMap(place: $0) }
+                    result(mappedPlaces)
+                }
+            })
         default:
             result(FlutterMethodNotImplemented)
         }
@@ -294,6 +348,30 @@ public class SwiftFlutterGooglePlacesSdkIosPlugin: NSObject, FlutterPlugin {
             fatalError("Invalid placeField: \(it)")
         }
     }
+
+    private func placePropertyFromStr(it: String) -> String {
+        switch (it) {
+        case "ADDRESS": return GMSPlaceProperty.formattedAddress.rawValue
+        case "ADDRESS_COMPONENTS": return GMSPlaceProperty.addressComponents.rawValue
+        case "BUSINESS_STATUS": return GMSPlaceProperty.businessStatus.rawValue
+        case "ID": return GMSPlaceProperty.placeID.rawValue
+        case "LAT_LNG": return GMSPlaceProperty.coordinate.rawValue
+        case "NAME": return GMSPlaceProperty.name.rawValue
+        case "OPENING_HOURS": return GMSPlaceProperty.openingHours.rawValue
+        case "PHONE_NUMBER": return GMSPlaceProperty.phoneNumber.rawValue
+        case "PHOTO_METADATAS": return GMSPlaceProperty.photos.rawValue
+        case "PLUS_CODE": return GMSPlaceProperty.plusCode.rawValue
+        case "PRICE_LEVEL": return GMSPlaceProperty.priceLevel.rawValue
+        case "RATING": return GMSPlaceProperty.rating.rawValue
+        case "TYPES": return GMSPlaceProperty.types.rawValue
+        case "USER_RATINGS_TOTAL": return GMSPlaceProperty.userRatingsTotal.rawValue
+        case "UTC_OFFSET": return GMSPlaceProperty.utcOffsetMinutes.rawValue
+        case "VIEWPORT": return GMSPlaceProperty.viewport.rawValue
+        case "WEBSITE_URI": return GMSPlaceProperty.website.rawValue
+        default:
+            fatalError("Invalid placeProperty: \(it)")
+        }
+    }
     
     private func responseToList(results: [GMSAutocompletePrediction]?) -> [Dictionary<String, Any?>]? {
         guard let results = results else {
@@ -330,18 +408,27 @@ public class SwiftFlutterGooglePlacesSdkIosPlugin: NSObject, FlutterPlugin {
                else {
             return nil
         }
-        
+
         return GMSPlaceRectangularLocationOption(northEast, southWest);
     }
-    
-    
+
+    private func circularBoundsFromMap(argument: Dictionary<String, Any?>?) -> GMSPlaceLocationRestriction? {
+        guard let argument = argument,
+              let center = latLngFromMap(argument: argument["center"] as? Dictionary<String, Any?>)?.coordinate as? CLLocationCoordinate2D,
+              let radius = argument["radius"] as? Double else {
+            return nil
+        }
+
+        return GMSPlaceCircularLocationOption(center, radius);
+    }
+
     private func latLngFromMap(argument: Dictionary<String, Any?>?) -> CLLocation? {
         guard let argument = argument,
               let lat = argument["lat"] as? Double,
               let lng = argument["lng"] as? Double else {
             return nil
         }
-        
+
         return CLLocation(latitude: lat, longitude: lng)
     }
     
