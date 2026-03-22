@@ -330,6 +330,12 @@ class FlutterGooglePlacesSdkPlugin : FlutterPlugin, MethodCallHandler {
                 "FormattedAddressAdr" -> Place.Field.ADR_FORMAT_ADDRESS
                 "UtcOffset" -> Place.Field.UTC_OFFSET
                 "Photos" -> Place.Field.PHOTO_METADATAS
+                "ID" -> Place.Field.ID
+                "NAME" -> Place.Field.DISPLAY_NAME
+                "ADDRESS" -> Place.Field.FORMATTED_ADDRESS
+                "PHONE_NUMBER" -> Place.Field.NATIONAL_PHONE_NUMBER
+                "LAT_LNG" -> Place.Field.LOCATION
+                "USER_RATINGS_TOTAL" -> Place.Field.USER_RATING_COUNT
                 else -> Place.Field.valueOf(it.toScreamingSnakeCase())
             }
         } catch (_: IllegalArgumentException) {
