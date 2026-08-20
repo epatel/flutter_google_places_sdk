@@ -56,8 +56,12 @@ public class SwiftFlutterGooglePlacesSdkIosPlugin: NSObject, FlutterPlugin {
             filter.locationBias = locationBias
             filter.locationRestriction = locationRestriction
 
-            placesClient.findAutocompletePredictions(
-                fromQuery: query, filter: filter, sessionToken: sessionToken,
+            let request = GMSAutocompleteRequest(query: query)
+            request.filter = filter
+            request.sessionToken = sessionToken
+
+            placesClient.fetchAutocompleteSuggestions(
+                from: request,
                 callback: { (results, error) in
                     if let error = error {
                         print("findAutoCompletePredictions error: \(error)")
@@ -75,17 +79,18 @@ public class SwiftFlutterGooglePlacesSdkIosPlugin: NSObject, FlutterPlugin {
         case METHOD_FETCH_PLACE:
             let args = call.arguments as! Dictionary<String,Any>
             let placeId = args["placeId"] as! String
-            let fields = ((args["fields"] as? [String])?.map {
-                (item) in return placeFieldFromStr(it: item)
-            })?.reduce(GMSPlaceField(), { partialResult, field in
-                return GMSPlaceField(rawValue: partialResult.rawValue | field.rawValue)
-            })
+            let properties = (args["fields"] as? [String])?.map {
+                (item) in return placePropertyFromStr(it: item)
+            } ?? [GMSPlaceProperty.all.rawValue]
             let newSessionToken = args["newSessionToken"] as? Bool ?? false
             let sessionToken = getSessionToken(force: newSessionToken == true)
-            
-            placesClient.fetchPlace(fromPlaceID: placeId,
-                                    placeFields: fields ?? GMSPlaceField.all,
-                                    sessionToken: sessionToken) { (place, error) in
+
+            let request = GMSFetchPlaceRequest(
+                placeID: placeId,
+                placeProperties: properties,
+                sessionToken: sessionToken
+            )
+            placesClient.fetchPlace(with: request) { (place, error) in
                 if let error = error {
                     print("fetchPlace error: \(error)")
                     result(FlutterError(
@@ -104,7 +109,13 @@ public class SwiftFlutterGooglePlacesSdkIosPlugin: NSObject, FlutterPlugin {
             let photoRef = photoMetadataMap["photoReference"] as! String
 
             if let photoMetadata = photosCache[photoRef] {
-                placesClient.loadPlacePhoto(photoMetadata, callback: { (photo, error) -> Void in
+                // maxSize from the metadata preserves the previous full-size behaviour of
+                // loadPlacePhoto; the maxWidth/maxHeight args are still ignored, as before.
+                let request = GMSFetchPhotoRequest(
+                    photoMetadata: photoMetadata,
+                    maxSize: photoMetadata.maxSize
+                )
+                placesClient.fetchPhoto(with: request, callback: { (photo, error) -> Void in
                     if let error = error {
                         print("fetchPlacePhoto error: \(error)")
                         result(FlutterError(
@@ -164,7 +175,7 @@ public class SwiftFlutterGooglePlacesSdkIosPlugin: NSObject, FlutterPlugin {
                 }
             }
 
-            placesClient.searchNearby(with: request, callback: { (places, error) in
+            placesClient.searchNearby(with: request, completion: { (response, error) in
                 if let error = error {
                     print("searchNearby error: \(error)")
                     result(FlutterError(
@@ -173,7 +184,7 @@ public class SwiftFlutterGooglePlacesSdkIosPlugin: NSObject, FlutterPlugin {
                         details: nil
                     ))
                 } else {
-                    let mappedPlaces = places?.map { self.placeToMap(place: $0) }
+                    let mappedPlaces = response?.places?.map { self.placeToMap(place: $0) }
                     result(mappedPlaces)
                 }
             })
@@ -325,30 +336,6 @@ public class SwiftFlutterGooglePlacesSdkIosPlugin: NSObject, FlutterPlugin {
       ]
     }
     
-    private func placeFieldFromStr(it: String) -> GMSPlaceField {
-        switch (it) {
-        case "ADDRESS": return GMSPlaceField.formattedAddress
-        case "ADDRESS_COMPONENTS": return GMSPlaceField.addressComponents
-        case "BUSINESS_STATUS": return GMSPlaceField.businessStatus
-        case "ID": return GMSPlaceField.placeID
-        case "LAT_LNG": return GMSPlaceField.coordinate
-        case "NAME": return GMSPlaceField.name
-        case "OPENING_HOURS": return GMSPlaceField.openingHours
-        case "PHONE_NUMBER": return GMSPlaceField.phoneNumber
-        case "PHOTO_METADATAS": return GMSPlaceField.photos
-        case "PLUS_CODE": return GMSPlaceField.plusCode
-        case "PRICE_LEVEL": return GMSPlaceField.priceLevel
-        case "RATING": return GMSPlaceField.rating
-        case "TYPES": return GMSPlaceField.types
-        case "USER_RATINGS_TOTAL": return GMSPlaceField.userRatingsTotal
-        case "UTC_OFFSET": return GMSPlaceField.utcOffsetMinutes
-        case "VIEWPORT": return GMSPlaceField.viewport
-        case "WEBSITE_URI": return GMSPlaceField.website
-        default:
-            fatalError("Invalid placeField: \(it)")
-        }
-    }
-
     private func placePropertyFromStr(it: String) -> String {
         switch (it) {
         case "ADDRESS": return GMSPlaceProperty.formattedAddress.rawValue
@@ -373,23 +360,33 @@ public class SwiftFlutterGooglePlacesSdkIosPlugin: NSObject, FlutterPlugin {
         }
     }
     
-    private func responseToList(results: [GMSAutocompletePrediction]?) -> [Dictionary<String, Any?>]? {
+    private func responseToList(results: [GMSAutocompleteSuggestion]?) -> [Dictionary<String, Any?>]? {
         guard let results = results else {
             return nil;
         }
-        
-        return results.map { (prediction: GMSAutocompletePrediction) in
-            return predictionToMap(prediction: prediction) }
+
+        // A suggestion whose placeSuggestion is nil carries no placeId and cannot be
+        // represented in the Dart AutocompletePrediction contract, so it is dropped.
+        return results.compactMap { (suggestion: GMSAutocompleteSuggestion) in
+            guard let placeSuggestion = suggestion.placeSuggestion else {
+                return nil
+            }
+            return placeSuggestionToMap(placeSuggestion: placeSuggestion) }
     }
-    
-    private func predictionToMap(prediction: GMSAutocompletePrediction) -> Dictionary<String, Any?> {
+
+    private func placeSuggestionToMap(placeSuggestion: GMSAutocompletePlaceSuggestion) -> Dictionary<String, Any?> {
         return [
-            "placeId": prediction.placeID,
-            "distanceMeters": prediction.distanceMeters,
-            "primaryText": prediction.attributedPrimaryText.string,
-            "secondaryText": prediction.attributedSecondaryText?.string ?? "",
-            "fullText": prediction.attributedFullText.string,
-            "placeTypes": prediction.types.map { (it) in return it.uppercased() }
+            "placeId": placeSuggestion.placeID,
+            "distanceMeters": placeSuggestion.distanceMeters,
+            "primaryText": placeSuggestion.attributedPrimaryText.string,
+            "secondaryText": placeSuggestion.attributedSecondaryText?.string ?? "",
+            "fullText": placeSuggestion.attributedFullText.string,
+            // placeTypes is intentionally omitted. The new autocomplete API returns
+            // Places API (new) type vocabulary (e.g. "coffee_stand") that the Dart
+            // PlaceType enum in flutter_google_places_sdk_platform_interface does not
+            // know, and its fromJson throws ArgumentError on any unknown value --
+            // failing the whole request. The Dart field is nullable and unused here.
+            "placeTypes": nil
         ];
     }
 
