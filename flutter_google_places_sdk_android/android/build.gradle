@@ -21,7 +21,13 @@ allprojects {
 }
 
 apply plugin: "com.android.library"
-apply plugin: "kotlin-android"
+
+// No KGP applied here: AGP 9 built-in Kotlin compiles the Kotlin sources, and
+// Flutter applies KGP itself when the app sets android.builtInKotlin=false.
+// In that case KGP defaults jvmTarget to the running JDK, so align it with Java.
+plugins.withId("org.jetbrains.kotlin.android") {
+    kotlin.compilerOptions.jvmTarget = org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17
+}
 
 android {
     if (project.android.hasProperty("namespace")) {
@@ -34,10 +40,6 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
 
-    kotlinOptions {
-        jvmTarget = JavaVersion.VERSION_17
-    }
-
     sourceSets {
         main.java.srcDirs += "src/main/kotlin"
         test.java.srcDirs += "src/test/kotlin"
@@ -46,7 +48,7 @@ android {
         minSdk = 21
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
     }
-    lintOptions {
+    lint {
         disable 'InvalidPackage'
     }
 //    testOptions {
